@@ -1,0 +1,12 @@
+# Build results
+bin/
+obj/
+.vs/
+*.user
+*.suo
+packages/
+*.log
+Thumbs.db
+.DS_Store
+StudyFiles/
+appsettings.Development.json
