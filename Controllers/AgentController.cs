@@ -89,4 +89,45 @@ public class AgentController : ControllerBase
             return StatusCode(500, new { error = ex.Message });
         }
     }
+    // POST api/agent/study-plan
+    [HttpPost("study-plan")]
+    public async Task<IActionResult> StudyPlan(
+        [FromBody] StudyPlanRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Topic))
+            return BadRequest(new { error = "Topic cannot be empty." });
+
+        if (request.Days < 1 || request.Days > 30)
+            return BadRequest(new { error = "Days must be between 1 and 30." });
+
+        try
+        {
+            var plan = await _agent.GenerateStudyPlanAsync(
+                request.Topic, request.Days);
+            return Ok(plan);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    // POST api/agent/system-design
+    [HttpPost("system-design")]
+    public async Task<IActionResult> SystemDesign(
+        [FromBody] SystemDesignRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Problem))
+            return BadRequest(new { error = "Problem cannot be empty." });
+
+        try
+        {
+            var design = await _agent.SystemDesignAsync(request.Problem);
+            return Ok(design);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
 }
