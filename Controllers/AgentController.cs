@@ -42,10 +42,51 @@ public class AgentController : ControllerBase
 
         var files = Directory.Exists(folder)
             ? Directory.GetFiles(folder)
-                .Select(Path.GetFileName)
+                .Select(f => Path.GetFileName(f))
                 .ToList()
             : new List<string>();
 
         return Ok(files);
+    }
+    // POST api/agent/mock-interview
+    // Generate a random question for a topic
+    [HttpPost("mock-interview")]
+    public async Task<IActionResult> MockInterview(
+        [FromBody] MockInterviewRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Topic))
+            return BadRequest(new { error = "Topic cannot be empty." });
+
+        try
+        {
+            var question = await _agent.GetMockQuestionAsync(request.Topic);
+            return Ok(question);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    // POST api/agent/evaluate
+    // Submit your answer and get scored
+    [HttpPost("evaluate")]
+    public async Task<IActionResult> Evaluate(
+        [FromBody] EvaluateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Question) ||
+            string.IsNullOrWhiteSpace(request.Answer))
+            return BadRequest(new { error = "Question and Answer required." });
+
+        try
+        {
+            var result = await _agent.EvaluateAnswerAsync(
+                request.Question, request.Answer);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
     }
 }

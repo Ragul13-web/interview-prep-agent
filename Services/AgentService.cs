@@ -89,6 +89,23 @@ public class AgentService
 
     public async Task<AgentResponse> AskAsync(string question)
     {
+        var isRelevant = await IsRelevantQuestionAsync(question);
+
+        if (!isRelevant)
+        {
+            return new AgentResponse
+            {
+                Topic = "OutOfScope",
+                Answer = "This topic is outside my scope. I'm configured for " +
+                 "your specific profile: C#, .NET, ASP.NET Core, " +
+                 "Entity Framework, SQL Server, Azure, and Python. " +
+                 "Please ask questions relevant to your experience.",
+                CodeExample = "",
+                Sources = new List<string>(),
+                FollowUpQuestions = new List<string>()
+            };
+        }
+
         var fileNames = _fileCache.Keys.ToList();
         var relevantChunks = new List<string>();
 
@@ -317,5 +334,178 @@ public class AgentService
                 .Trim();
 
         return text.Trim();
+    }
+    // Generates a random interview question for a given topic
+    public async Task<MockQuestion> GetMockQuestionAsync(string topic)
+    {
+        var isRelevant = await IsRelevantQuestionAsync(topic);
+
+        if (!isRelevant)
+        {
+            return new MockQuestion
+            {
+                Question = "This topic is outside your profile. Please use topics " +
+                   "like CSharp, DotNet, ASPNET, EntityFramework, " +
+                   "SQL, Azure, Python, DesignPatterns, or HR.",
+                Difficulty = "N/A",
+                Topic = "OutOfScope"
+            };
+        }
+        var mockSchema = @"{""question"": ""your question here"", ""difficulty"": ""Easy | Intermediate | Hard"", ""topic"": """ + topic + @"""}";
+
+        var prompt = $"""
+        You are an interviewer at a top IT company interviewing
+        a .NET developer with 5 years of experience.
+
+        Generate ONE interview question about: {topic}
+
+        Respond with ONLY valid JSON, no markdown, no explanation:
+
+        {mockSchema}
+        """;
+
+        try
+        {
+            var result = await _kernel.InvokePromptAsync(prompt);
+            var raw = StripCodeFences(result.ToString().Trim());
+
+            var question = System.Text.Json.JsonSerializer
+                .Deserialize<MockQuestion>(raw,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+            return question ?? new MockQuestion
+            {
+                Question = "What is dependency injection in ASP.NET Core?",
+                Difficulty = "Intermediate",
+                Topic = topic
+            };
+        }
+        catch
+        {
+            return new MockQuestion
+            {
+                Question = "What is dependency injection in ASP.NET Core?",
+                Difficulty = "Intermediate",
+                Topic = topic
+            };
+        }
+    }
+
+    // Evaluates the candidate's answer and scores it
+    public async Task<EvaluationResult> EvaluateAnswerAsync(
+        string question, string userAnswer)
+    {
+        var jsonSchema = @"{
+        ""score"": 8,
+        ""feedback"": ""overall feedback on the answer"",
+        ""missingPoints"": [""point 1 that was missing"", ""point 2""],
+        ""idealAnswer"": ""what a perfect answer would include"",
+        ""verdict"": ""Strong | Good | Needs Improvement""
+    }";
+
+        var prompt = $"""
+        You are a strict but fair technical interviewer at a top IT company.
+        Evaluate this candidate's answer out of 10.
+
+        Question: {question}
+
+        Candidate's Answer: {userAnswer}
+
+        Respond with ONLY valid JSON, no markdown, no explanation:
+
+        {jsonSchema}
+        """;
+
+        try
+        {
+            var result = await _kernel.InvokePromptAsync(prompt);
+            var raw = StripCodeFences(result.ToString().Trim());
+
+            var evaluation = System.Text.Json.JsonSerializer
+                .Deserialize<EvaluationResult>(raw,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+            return evaluation ?? new EvaluationResult
+            {
+                Score = 0,
+                Feedback = "Could not evaluate answer.",
+                Verdict = "Needs Improvement"
+            };
+        }
+        catch
+        {
+            return new EvaluationResult
+            {
+                Score = 0,
+                Feedback = "Could not evaluate answer. Please try again.",
+                Verdict = "Needs Improvement"
+            };
+        }
+    }
+    // Validates if the question is relevant to .NET interviews
+    private async Task<bool> IsRelevantQuestionAsync(string question)
+    {
+        var prompt = $"""
+        You are a gatekeeper for a personalized interview preparation 
+        tool built for a specific candidate profile:
+
+        Candidate Profile:
+        - 5 years of C# and .NET development experience
+        - Skills: ASP.NET Core, Web API, MVC, Entity Framework, 
+          ADO.NET, SQL Server, Azure basics
+        - 1 year of Python experience
+        - Preparing for interviews at Indian IT companies
+
+        ALLOWED topics (return RELEVANT):
+        - C#, .NET, .NET Core, .NET Framework
+        - ASP.NET Core, Web API, MVC, Razor Pages
+        - Entity Framework Core, ADO.NET, LINQ
+        - SQL Server, database design, query optimization
+        - Azure services (App Service, Functions, SQL, Blob)
+        - Python basics, OOP in Python, common libraries
+        - Software design patterns (SOLID, Repository, Factory etc.)
+        - Data structures and algorithms in C# or Python
+        - HR and behavioral interview questions
+        - General software engineering concepts
+        - Git, version control basics
+        - Microservices, REST API design
+
+        NOT ALLOWED topics (return IRRELEVANT):
+        - Java, Spring Boot, Hibernate, Maven
+        - JavaScript, React, Angular, Vue, Node.js
+        - PHP, Ruby, Go, Rust, Kotlin, Swift
+        - DevOps, Kubernetes, Docker (unless basic)
+        - Non-technical topics (weather, sports, food, news)
+        - Any framework or language NOT in the candidate profile
+
+        Input: {question}
+
+        Respond with ONLY one word:
+        RELEVANT
+        IRRELEVANT
+        """;
+
+        try
+        {
+            var result = await _kernel.InvokePromptAsync(prompt);
+            var response = result.ToString().Trim().ToUpper();
+            Console.WriteLine($"[Topic Guard] {response}");
+            return response.Trim() switch
+            {
+                "RELEVANT" => true,
+                "IRRELEVANT" => false,
+                _ => true // unknown response — allow through by default
+            };
+        }
+        catch
+        {
+            return true;
+        }
     }
 }
