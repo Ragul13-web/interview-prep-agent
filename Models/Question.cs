@@ -1,4 +1,6 @@
-﻿namespace InterviewPrepAgent.Models
+﻿using System.Text.Json.Serialization;
+
+namespace InterviewPrepAgent.Models
 {
     public class Question
     {
@@ -11,10 +13,20 @@
     }
     public class AgentResponse
     {
-        public string Answer { get; set; } = "";
-        public List<string>? Sources { get; set; } = new();
+        [JsonPropertyName("topic")]
         public string Topic { get; set; } = "";
-        public List<string>? FollowUpQuestions { get; set; } = new();
+
+        [JsonPropertyName("answer")]
+        public string Answer { get; set; } = "";
+
+        [JsonPropertyName("codeExample")]
+        public string CodeExample { get; set; } = "";
+
+        [JsonPropertyName("sources")]
+        public List<string> Sources { get; set; } = new();
+
+        [JsonPropertyName("followUpQuestions")]
+        public List<string> FollowUpQuestions { get; set; } = new();
     }
 
     public record AskRequest(string Question);

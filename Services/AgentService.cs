@@ -18,14 +18,12 @@ public class AgentService
             Directory.GetCurrentDirectory(), "StudyFiles");
         Directory.CreateDirectory(_filesFolder);
 
-        // Read provider from appsettings — "Groq" or "Ollama"
         _provider = config["AI:Provider"] ?? "Groq";
 
         var builder = Kernel.CreateBuilder();
 
         if (_provider.Equals("Ollama", StringComparison.OrdinalIgnoreCase))
         {
-            // Local Ollama — no API key, runs on your machine
             var endpoint = config["AI:Ollama:Endpoint"]
                            ?? "http://localhost:11434";
             var modelId = config["AI:Ollama:ModelId"]
@@ -38,23 +36,24 @@ public class AgentService
             );
 #pragma warning restore SKEXP0070
 
-            Console.WriteLine($"[AI Provider] Ollama — {modelId} @ {endpoint}");
+            Console.WriteLine(
+                $"[AI Provider] Ollama — {modelId} @ {endpoint}");
         }
         else
         {
-            // Groq cloud — free API, fast responses
             var apiKey = config["AI:Groq:ApiKey"]
                           ?? throw new Exception(
                               "Groq API key missing in appsettings.");
             var modelId = config["AI:Groq:ModelId"]
-                          ?? "llama3-8b-8192";
+                          ?? "llama-3.3-70b-versatile";
 
             builder.AddOpenAIChatCompletion(
                 modelId: modelId,
                 apiKey: apiKey,
                 httpClient: new HttpClient
                 {
-                    BaseAddress = new Uri("https://api.groq.com/openai/v1/"),
+                    BaseAddress = new Uri(
+                        "https://api.groq.com/openai/v1/"),
                     Timeout = TimeSpan.FromSeconds(30)
                 }
             );
@@ -65,6 +64,8 @@ public class AgentService
         _kernel = builder.Build();
         LoadFilesIntoCache();
     }
+
+    // ─── File Loading ────────────────────────────────────────────
 
     private void LoadFilesIntoCache()
     {
@@ -84,11 +85,14 @@ public class AgentService
             string.Join(", ", _fileCache.Keys));
     }
 
+    // ─── Main Agent Method ───────────────────────────────────────
+
     public async Task<AgentResponse> AskAsync(string question)
     {
         var fileNames = _fileCache.Keys.ToList();
         var relevantChunks = new List<string>();
 
+        // Step 1 — Find relevant paragraphs from each file
         foreach (var (fileName, fullContent) in _fileCache)
         {
             var relevant = ExtractRelevantParagraphs(
@@ -104,70 +108,110 @@ public class AgentService
             ? string.Join("\n\n", relevantChunks)
             : "No matching content in study files.";
 
+        // Step 2 — Build prompt instructing LLM to return pure JSON
+        var jsonSchema = @"{
+          ""topic"": ""one word: CSharp | DotNet | EF | SQL | ASPNET | HR | Python | General"",
+          ""answer"": ""clear 4-6 line interview answer here"",
+          ""codeExample"": ""short C# code example if relevant, empty string if not applicable"",
+          ""followUpQuestions"": [
+            ""first follow-up question the interviewer will likely ask"",
+            ""second follow-up question the interviewer will likely ask""
+          ]
+        }";
+
         var prompt = $"""
-            You are an expert .NET interview coach.
-            A developer with 5 years of C# and .NET experience
-            is preparing for interviews at companies like TCS,
-            Cognizant, Accenture, HCLTech, LTIMindtree,
-            EY, PwC, Deloitte, and BNY Mellon.
+        You are an expert .NET interview coach.
+        A developer with 5 years of C# and .NET experience
+        is preparing for interviews at companies like TCS,
+        Cognizant, Accenture, HCLTech, LTIMindtree,
+        EY, PwC, Deloitte, and BNY Mellon.
 
-            {(hasRelevant
-                ? "Relevant content from study files:"
-                : "No matching content found. Answer from your expert .NET knowledge.")}
+        {(hasRelevant
+                    ? "Relevant content from study files:"
+                    : "No matching content found. Answer from your expert .NET knowledge.")}
 
-            {context}
+        {context}
 
-            Interview Question: {question}
+        Interview Question: {question}
 
-            Respond in EXACTLY this format, no extra text:
+        You MUST respond with ONLY a valid JSON object.
+        No explanation, no markdown, no code fences.
+        Exactly this structure:
 
-            TOPIC: [one word: CSharp, DotNet, EF, SQL, ASPNET, HR, Python, or General]
-
-            ANSWER:
-            [Clear 4-6 line answer suitable for an interview]
-
-            CODE:
-            [Short C# code example if relevant, else write NONE]
-
-            FOLLOWUP:
-            1. [follow-up question the interviewer will likely ask]
-            2. [another likely follow-up question]
-            """;
-
-        // Timeout: 120s for Ollama (slow/local), 30s for Groq (fast/cloud)
+        {jsonSchema}
+        """;
+        // Step 3 — Set timeout based on provider
         var timeoutSeconds = _provider.Equals(
             "Ollama", StringComparison.OrdinalIgnoreCase) ? 120 : 30;
 
         using var cts = new CancellationTokenSource(
             TimeSpan.FromSeconds(timeoutSeconds));
 
+        // Step 4 — Call the AI
+        FunctionResult? result = null;
+
         try
         {
-            var result = await _kernel.InvokePromptAsync(
+            result = await _kernel.InvokePromptAsync(
                 prompt, cancellationToken: cts.Token);
-            var raw = result.ToString();
 
-            var topic = ExtractSection(raw, "TOPIC:", "ANSWER:").Trim();
-            var answer = ExtractSection(raw, "ANSWER:", "CODE:").Trim();
-            var code = ExtractSection(raw, "CODE:", "FOLLOWUP:").Trim();
-            var followup = ExtractSection(raw, "FOLLOWUP:", null).Trim();
+            var raw = result.ToString().Trim();
 
-            var fullAnswer = (code != "NONE" &&
-                             !string.IsNullOrWhiteSpace(code))
-                ? $"{answer}\n\nCode Example:\n{code}"
-                : answer;
+            // Step 5 — Strip markdown fences if LLM adds them anyway
+            raw = StripCodeFences(raw);
 
-            var followUpList = followup
-                .Split('\n')
-                .Where(l => l.TrimStart().StartsWith("1.") ||
-                            l.TrimStart().StartsWith("2."))
-                .Select(l => l.Trim().TrimStart('1', '2', '.', ' '))
-                .Where(l => !string.IsNullOrEmpty(l))
-                .ToList();
+            Console.WriteLine($"[Raw AI Response] {raw}");
+
+            // Step 6 — Deserialize JSON directly into AgentResponse
+            var response = System.Text.Json.JsonSerializer
+                .Deserialize<AgentResponse>(raw,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+            if (response == null)
+                throw new Exception("Deserialization returned null.");
+
+            // Step 7 — Attach matched source filenames
+            response.Sources = hasRelevant
+                ? relevantChunks
+                    .Select(c => c.Split('\n')[0]
+                        .Replace("=== SOURCE: ", "")
+                        .Replace(" ===", ""))
+                    .ToList()
+                : new List<string>();
+
+            return response;
+        }
+        catch (OperationCanceledException)
+        {
+            return new AgentResponse
+            {
+                Topic = "Error",
+                Answer = _provider.Equals("Ollama",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "Ollama timed out. Switch AI:Provider " +
+                      "to Groq in appsettings.json."
+                    : "Groq timed out. Check your API key " +
+                      "or internet connection.",
+                CodeExample = "",
+                Sources = fileNames,
+                FollowUpQuestions = new List<string>()
+            };
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            // Fallback — LLM didn't return valid JSON
+            // Return raw text as the answer instead of crashing
+            Console.WriteLine($"[JSON Parse Error] {ex.Message}");
 
             return new AgentResponse
             {
-                Answer = fullAnswer,
+                Topic = "General",
+                Answer = result?.ToString()
+                              ?? "Could not parse AI response.",
+                CodeExample = "",
                 Sources = hasRelevant
                     ? relevantChunks
                         .Select(c => c.Split('\n')[0]
@@ -175,36 +219,27 @@ public class AgentService
                             .Replace(" ===", ""))
                         .ToList()
                     : new List<string>(),
-                Topic = topic,
-                FollowUpQuestions = followUpList
-            };
-        }
-        catch (OperationCanceledException)
-        {
-            return new AgentResponse
-            {
-                Answer = _provider.Equals("Ollama",
-                    StringComparison.OrdinalIgnoreCase)
-                    ? "Ollama timed out. Your machine may not have enough free RAM. " +
-                      "Try switching AI:Provider to Groq in appsettings.json."
-                    : "Groq timed out. Check your API key or internet connection.",
-                Sources = fileNames,
-                Topic = "Error",
                 FollowUpQuestions = new List<string>()
             };
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[Error] {ex.Message}");
+
             return new AgentResponse
             {
-                Answer = $"Error: {ex.Message}",
-                Sources = fileNames,
                 Topic = "Error",
+                Answer = $"Error: {ex.Message}",
+                CodeExample = "",
+                Sources = fileNames,
                 FollowUpQuestions = new List<string>()
             };
         }
     }
 
+    // ─── Helpers ─────────────────────────────────────────────────
+
+    // Scores paragraphs by keyword relevance and returns top matches
     private string ExtractRelevantParagraphs(
         string content, string question, int maxChars)
     {
@@ -225,7 +260,8 @@ public class AgentService
             .Select(p => new
             {
                 Text = p,
-                Score = keywords.Count(k => p.ToLower().Contains(k))
+                Score = keywords.Count(k =>
+                    p.ToLower().Contains(k))
             })
             .Where(x => x.Score > 0)
             .OrderByDescending(x => x.Score)
@@ -242,11 +278,13 @@ public class AgentService
         return result.ToString();
     }
 
+    // Reads all paragraph text from a .docx file using OpenXml
     private string ReadDocx(string filePath)
     {
         try
         {
-            using var doc = WordprocessingDocument.Open(filePath, false);
+            using var doc = WordprocessingDocument
+                .Open(filePath, false);
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body == null) return "";
 
@@ -258,19 +296,26 @@ public class AgentService
         catch { return ""; }
     }
 
-    private string ExtractSection(string text, string start, string? end)
+    // Removes ```json ... ``` or ``` ... ``` that LLMs sometimes add
+    private string StripCodeFences(string text)
     {
-        var startIdx = text.IndexOf(start,
-            StringComparison.OrdinalIgnoreCase);
-        if (startIdx < 0) return "";
-        startIdx += start.Length;
+        if (string.IsNullOrWhiteSpace(text))
+            return text;
 
-        if (end == null) return text.Substring(startIdx);
+        // Remove opening fence and language tag (```json or ```)
+        if (text.StartsWith("```"))
+        {
+            var firstNewline = text.IndexOf('\n');
+            if (firstNewline > 0)
+                text = text.Substring(firstNewline + 1);
+        }
 
-        var endIdx = text.IndexOf(end, startIdx,
-            StringComparison.OrdinalIgnoreCase);
-        return endIdx < 0
-            ? text.Substring(startIdx)
-            : text.Substring(startIdx, endIdx - startIdx);
+        // Remove closing fence
+        if (text.EndsWith("```"))
+            text = text
+                .Substring(0, text.LastIndexOf("```"))
+                .Trim();
+
+        return text.Trim();
     }
 }

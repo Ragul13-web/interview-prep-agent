@@ -106,7 +106,7 @@ No code changes needed. The AgentService constructor reads this config and initi
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/interview-prep-agent.git
+git clone https://github.com/Ragul13-web/interview-prep-agent.git
 cd interview-prep-agent
 ```
 
