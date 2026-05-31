@@ -508,4 +508,144 @@ public class AgentService
             return true;
         }
     }
+    // Study Plan Generator
+    public async Task<StudyPlan> GenerateStudyPlanAsync(
+        string topic, int days)
+    {
+        // Guard check
+        var isRelevant = await IsRelevantQuestionAsync(topic);
+        if (!isRelevant)
+        {
+            return new StudyPlan
+            {
+                OverallTopic = "OutOfScope",
+                TotalDays = 0,
+                Days = new List<StudyPlanDay>(),
+                Tip = "Please provide a relevant topic like " +
+                               "CSharp, ASPNET, SQL, Azure, or Python."
+            };
+        }
+
+        var jsonSchema = @"{
+        ""overallTopic"": ""topic name"",
+        ""totalDays"": " + days + @",
+        ""days"": [
+            {
+                ""day"": 1,
+                ""topic"": ""specific sub-topic"",
+                ""focus"": ""what to focus on today"",
+                ""keyConcepts"": [""concept1"", ""concept2"", ""concept3""],
+                ""practiceQuestion"": ""one practice interview question""
+            }
+        ],
+        ""tip"": ""one overall preparation tip""
+    }";
+
+        var prompt = $"""
+        You are an expert .NET interview coach creating a 
+        personalized study plan.
+
+        Create a {days}-day study plan for: {topic}
+
+        The candidate has 5 years of .NET experience and is 
+        preparing for interviews at top Indian IT companies.
+
+        Each day should cover a distinct sub-topic with 
+        increasing complexity.
+
+        Respond with ONLY valid JSON, no markdown, no explanation:
+
+        {jsonSchema}
+        """;
+
+        try
+        {
+            var result = await _kernel.InvokePromptAsync(prompt);
+            var raw = StripCodeFences(result.ToString().Trim());
+
+            var plan = System.Text.Json.JsonSerializer
+                .Deserialize<StudyPlan>(raw,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+            return plan ?? new StudyPlan
+            {
+                OverallTopic = topic,
+                TotalDays = days,
+                Tip = "Could not generate plan. Please try again."
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[StudyPlan Error] {ex.Message}");
+            return new StudyPlan
+            {
+                OverallTopic = topic,
+                TotalDays = days,
+                Tip = "Could not generate plan. Please try again."
+            };
+        }
+    }
+
+    // System Design Interview Mode
+    public async Task<SystemDesignResponse> SystemDesignAsync(
+        string problem)
+    {
+        var jsonSchema = @"{
+        ""problem"": ""problem statement"",
+        ""requirements"": [""req1"", ""req2"", ""req3""],
+        ""components"": [""component1"", ""component2""],
+        ""databaseDesign"": ""database design explanation"",
+        ""scalingStrategy"": ""how to scale this system"",
+        ""cachingStrategy"": ""caching approach"",
+        ""microservices"": [""service1"", ""service2""],
+        ""tradeOffs"": [""tradeoff1"", ""tradeoff2""],
+        ""followUpQuestions"": [""question1"", ""question2""]
+        }";
+
+        var prompt = $"""
+        You are a system design interviewer at a top tech company.
+        The candidate has 5 years of .NET and ASP.NET Core experience.
+
+        Provide a complete system design answer for:
+        {problem}
+
+        Cover: requirements, components, database design,
+        scaling, caching, microservices, and trade-offs.
+
+        Keep it practical and relevant to .NET/Azure ecosystem.
+
+        Respond with ONLY valid JSON, no markdown, no explanation:
+
+        {jsonSchema}
+        """;
+
+        try
+        {
+            var result = await _kernel.InvokePromptAsync(prompt);
+            var raw = StripCodeFences(result.ToString().Trim());
+
+            var design = System.Text.Json.JsonSerializer
+                .Deserialize<SystemDesignResponse>(raw,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+            return design ?? new SystemDesignResponse
+            {
+                Problem = problem
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SystemDesign Error] {ex.Message}");
+            return new SystemDesignResponse
+            {
+                Problem = $"Error: {ex.Message}"
+            };
+        }
+    }
 }
