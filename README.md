@@ -48,6 +48,59 @@ Structured Response
 
 ---
 
+## 🔄 How the Agent Works — Flow Diagram
+
+┌─────────────────────────────────────────────┐
+│              User sends question             │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────┐
+│         AgentController receives request     │
+│         POST /api/agent/ask                  │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────┐
+│              AgentService                    │
+│                                              │
+│  1. Score paragraphs by keyword relevance    │
+│  2. Extract top 1500 chars per file          │
+│  3. Build structured prompt with context     │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────┐
+│           Semantic Kernel                    │
+│                                              │
+│   Provider = "Groq"  → Groq Cloud API        │
+│   Provider = "Ollama"→ Local LLaMA 3         │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────┐
+│         LLM returns pure JSON                │
+│         StripCodeFences() cleans it          │
+│         JsonSerializer deserializes it       │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────┐
+│  AgentResponse returned to caller            │
+│  { topic, answer, codeExample,               │
+│    sources, followUpQuestions }              │
+└─────────────────────────────────────────────┘
+
+## 🎯 Mock Interview Flow
+
+POST /api/agent/mock-interview  →  Agent generates question
+          ↓
+User answers the question
+          ↓
+POST /api/agent/evaluate  →  Agent scores answer out of 10
+          ↓
+Returns { score, feedback, missingPoints, idealAnswer, verdict }
+
 ## 🛠️ Tech Stack
 
 | Layer | Technology | Purpose |
